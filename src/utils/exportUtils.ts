@@ -346,6 +346,7 @@ const buildTierSpreadsheet = async (
 };
 
 export const collectFullResolutionManifest = async (
+	namespace: string,
 	tiers: TierItem[] | undefined,
 ): Promise<ExportManifestEntry[]> => {
 	const safeTiers = Array.isArray(tiers) ? tiers : [];
@@ -356,11 +357,11 @@ export const collectFullResolutionManifest = async (
 		const tier = safeTiers[tierIndex];
 		const tierLabel = typeof tier.tierLabel === "string" ? tier.tierLabel : "";
 		const tierFolder = sanitizeFolderName(tierLabel || `tier_${tierIndex + 1}`);
-		const tierImages = await getImageStore(`tierImages_${tier.id}`) as StoredImage[];
+		const tierImages = await getImageStore(namespace, `tierImages_${tier.id}`) as StoredImage[];
 
 		for (let itemIndex = 0; itemIndex < tierImages.length; itemIndex += 1) {
 			const image = tierImages[itemIndex];
-			const originalData = await getOriginalImageData(image.id);
+			const originalData = await getOriginalImageData(namespace, image.id);
 			const dataUrl = originalData ?? image.url;
 			const { mimeType } = splitDataUrl(dataUrl);
 			const extension = mimeTypeToExtension(mimeType);
@@ -384,10 +385,10 @@ export const collectFullResolutionManifest = async (
 		}
 	}
 
-	const unassignedImages = await getImageStore("imageHolder") as StoredImage[];
+	const unassignedImages = await getImageStore(namespace, "imageHolder") as StoredImage[];
 	for (let itemIndex = 0; itemIndex < unassignedImages.length; itemIndex += 1) {
 		const image = unassignedImages[itemIndex];
-		const originalData = await getOriginalImageData(image.id);
+		const originalData = await getOriginalImageData(namespace, image.id);
 		const dataUrl = originalData ?? image.url;
 		const { mimeType } = splitDataUrl(dataUrl);
 		const extension = mimeTypeToExtension(mimeType);

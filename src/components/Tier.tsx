@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useContext, useCallback } from "react";
 import { ReactSortable } from "react-sortablejs";
 import { SketchPicker } from "react-color";
-import { StylingContext, TierContext } from "../App"
+import { ProjectContext, StylingContext, TierContext } from "../App"
 import Image from "./Image"
 import {
 	getImageStore,
@@ -26,6 +26,7 @@ interface TierProps {
 }
 
 const Tier: React.FC<TierProps> = ({ id, color, tierLabel, onDelete }) => {
+	const { namespace } = useContext(ProjectContext);
 	const { style } = useContext(StylingContext);
 
 	const [images, setImages] = useState<ImageItem[]>([]);
@@ -115,9 +116,9 @@ const Tier: React.FC<TierProps> = ({ id, color, tierLabel, onDelete }) => {
 		let isMounted = true;
 
 		const loadImages = async () => {
-			await migrateImageStoresFromLocalStorage();
-			const storedImages = await getImageStore(`tierImages_${id}`);
-			const resizedImages = await resizeStoredImages(storedImages, {
+			await migrateImageStoresFromLocalStorage(namespace);
+			const storedImages = await getImageStore(namespace, `tierImages_${id}`);
+			const resizedImages = await resizeStoredImages(namespace, storedImages, {
 				size: previewPixelSize,
 				quality: style.quality,
 				pasteScaleMode: style.pasteScaleMode,
@@ -147,8 +148,8 @@ const Tier: React.FC<TierProps> = ({ id, color, tierLabel, onDelete }) => {
 		}
 
 		const persistImages = async () => {
-			const fullResolutionImages = await getFullResolutionImages(images);
-			await setImageStore(`tierImages_${id}`, fullResolutionImages);
+			const fullResolutionImages = await getFullResolutionImages(namespace, images);
+			await setImageStore(namespace, `tierImages_${id}`, fullResolutionImages);
 		};
 
 		persistImages();
@@ -181,7 +182,7 @@ const Tier: React.FC<TierProps> = ({ id, color, tierLabel, onDelete }) => {
 	};
 
 	const handleDeleteImage = useCallback((imageId: number) => {
-		deleteOriginalImageData(imageId).catch((error) => {
+		deleteOriginalImageData(namespace, imageId).catch((error) => {
 			console.error("Failed to delete original image data:", error);
 		});
 		setImages((prevImages) => prevImages.filter((img) => img.id !== imageId));
@@ -194,7 +195,7 @@ const Tier: React.FC<TierProps> = ({ id, color, tierLabel, onDelete }) => {
 	}, []);
 
 	const handleDeleteTier = async () => {
-		await Promise.all(images.map((image) => deleteOriginalImageData(image.id).catch((error) => {
+		await Promise.all(images.map((image) => deleteOriginalImageData(namespace, image.id).catch((error) => {
 			console.error("Failed to delete original image data:", error);
 		})));
 		onDelete();

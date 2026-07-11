@@ -1,5 +1,5 @@
 import React, { FormEvent, useContext, useState } from "react";
-import { StylingContext, TierContext } from "../App";
+import { ProjectContext, StylingContext, TierContext } from "../App";
 import { toBlob } from 'html-to-image';
 import { clearAllImageStores } from "../utils/imageStore";
 import {
@@ -20,6 +20,7 @@ interface ModalProps {
 }
 
 const SettingsModal: React.FC<ModalProps> = ({ isOpen, onClose }) => {
+	const { namespace } = useContext(ProjectContext);
 	const { style, setStyle } = useContext(StylingContext);
 	const { tiers } = useContext(TierContext);
 	const [selectedStyle, setSelectedStyle] = useState(style);
@@ -77,9 +78,20 @@ const SettingsModal: React.FC<ModalProps> = ({ isOpen, onClose }) => {
 		if (target.id === "modal-bg") onClose();
 	};
 
-	const handleClearLocalStorage = async () => {
-		localStorage.clear();
-		await clearAllImageStores();
+	const handleClearProject = async () => {
+		// Clear only current project's localStorage keys
+		const prefix = `${namespace}_`;
+		const keysToRemove: string[] = [];
+		for (let i = 0; i < localStorage.length; i++) {
+			const key = localStorage.key(i);
+			if (key && key.startsWith(prefix)) {
+				keysToRemove.push(key);
+			}
+		}
+		keysToRemove.forEach((key) => localStorage.removeItem(key));
+
+		// Clear current project's IndexedDB images
+		await clearAllImageStores(namespace);
 		onClose();
 		window.location.reload();
 	};
@@ -163,7 +175,7 @@ const SettingsModal: React.FC<ModalProps> = ({ isOpen, onClose }) => {
 		setExportStatus("Collecting full-resolution images...");
 
 		try {
-			const manifest = await collectFullResolutionManifest(tiers);
+			const manifest = await collectFullResolutionManifest(namespace, tiers);
 			if (manifest.length === 0) {
 				setExportStatus("No images to export.");
 				return;
@@ -194,7 +206,7 @@ const SettingsModal: React.FC<ModalProps> = ({ isOpen, onClose }) => {
 		setExportStatus("Collecting full-resolution images...");
 
 		try {
-			const manifest = await collectFullResolutionManifest(tiers);
+			const manifest = await collectFullResolutionManifest(namespace, tiers);
 			if (manifest.length === 0) {
 				setExportStatus("No images to export.");
 				return;
@@ -366,9 +378,9 @@ const SettingsModal: React.FC<ModalProps> = ({ isOpen, onClose }) => {
 						<button
 							type="button"
 							className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
-							onClick={handleClearLocalStorage}
+							onClick={handleClearProject}
 						>
-							Clear Local Storage
+							Clear Project Data
 						</button>
 						<button
 							type="button"

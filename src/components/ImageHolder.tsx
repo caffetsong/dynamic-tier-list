@@ -2,7 +2,7 @@ import { useState, useEffect, useContext, useCallback, useRef } from "react";
 import { ReactSortable } from "react-sortablejs";
 import SettingsModal from "./SettingsModal";
 import Image from "./Image";
-import { StylingContext } from "../App";
+import { ProjectContext, StylingContext } from "../App";
 import {
 	getImageStore,
 	migrateImageStoresFromLocalStorage,
@@ -21,6 +21,7 @@ interface ImageItem {
 }
 
 const ImageHolder = () => {
+	const { namespace } = useContext(ProjectContext);
 	const { style } = useContext(StylingContext);
 
 	const [images, setImages] = useState<ImageItem[]>([]);
@@ -86,7 +87,7 @@ const ImageHolder = () => {
 	const storeImportedImage = useCallback(
 		async (imageId: number, originalDataUrl: string) => {
 			try {
-				await setOriginalImageData({ id: imageId, url: originalDataUrl });
+				await setOriginalImageData(namespace, { id: imageId, url: originalDataUrl });
 			} catch (error) {
 				console.error("Failed to save original image data:", error);
 			}
@@ -139,7 +140,7 @@ const ImageHolder = () => {
 	}, []);
 
 	const handleDeleteImage = useCallback((imageId: number) => {
-		deleteOriginalImageData(imageId).catch((error) => {
+		deleteOriginalImageData(namespace, imageId).catch((error) => {
 			console.error("Failed to delete original image data:", error);
 		});
 		setImages((prevImages) => prevImages.filter((img) => img.id !== imageId));
@@ -180,9 +181,9 @@ const ImageHolder = () => {
 		let isMounted = true;
 
 		const loadImages = async () => {
-			await migrateImageStoresFromLocalStorage();
-			const storedImages = await getImageStore("imageHolder");
-			const resizedImages = await resizeStoredImages(storedImages, {
+			await migrateImageStoresFromLocalStorage(namespace);
+			const storedImages = await getImageStore(namespace, "imageHolder");
+			const resizedImages = await resizeStoredImages(namespace, storedImages, {
 				size: previewPixelSize,
 				quality: style.quality,
 				pasteScaleMode: style.pasteScaleMode,
@@ -236,8 +237,8 @@ const ImageHolder = () => {
 
 		const persistImages = async () => {
 			try {
-				const fullResolutionImages = await getFullResolutionImages(images);
-				await setImageStore("imageHolder", fullResolutionImages);
+				const fullResolutionImages = await getFullResolutionImages(namespace, images);
+				await setImageStore(namespace, "imageHolder", fullResolutionImages);
 			} catch (error) {
 				window.alert("Failed to save images locally. You can try deleting some images or clearing local storage in settings.");
 				console.error("Failed to save images to IndexedDB:", error);

@@ -3,7 +3,9 @@ import "./index.css";
 import TierList from "./components/TierList";
 import ImageHolder from "./components/ImageHolder";
 import { AddTierButton } from "./components/TierModal";
-import { migrateImageStoresFromLocalStorage } from "./utils/imageStore";
+import ProjectSelector from "./components/ProjectSelector";
+import { migrateToProjectSystem } from "./utils/imageStore";
+import { getProjectList, getCurrentProjectId, setCurrentProjectId, createProject } from "./utils/projectStore";
 
 interface Style {
 	ratio: string;
@@ -28,10 +30,23 @@ interface TierState {
 	setTiers: React.Dispatch<React.SetStateAction<Tier[]>>;
 }
 
+interface ProjectState {
+	projectId: string;
+	namespace: string;
+	switchProject: (newProjectId: string) => void;
+}
+
 export const StylingContext = React.createContext<StyleState>({} as StyleState);
 export const TierContext = React.createContext<TierState>({} as TierState);
+export const ProjectContext = React.createContext<ProjectState>({} as ProjectState);
 
-const App = () => {
+interface AppInnerProps {
+	projectId: string;
+	namespace: string;
+	switchProject: (newProjectId: string) => void;
+}
+
+const AppInner: React.FC<AppInnerProps> = ({ projectId, namespace, switchProject }) => {
 	const normalizeStyle = (value: unknown): Style => {
 		const fallback: Style = {
 			ratio: "preserve",
@@ -57,8 +72,11 @@ const App = () => {
 		};
 	};
 
+	const tiersKey = `${namespace}_tiers`;
+	const styleKey = `${namespace}_style`;
+
 	const [style, setStyle] = useState<Style>(() => {
-		const storedStyle = localStorage.getItem("style");
+		const storedStyle = localStorage.getItem(styleKey);
 		if (storedStyle) {
 			if (storedStyle.startsWith("{")) {
 				return normalizeStyle(JSON.parse(storedStyle));
@@ -71,8 +89,9 @@ const App = () => {
 			return { ratio: "preserve", size: 80, quality: 100, pasteScaleMode: "preserve" };
 		}
 	});
+
 	const [tiers, setTiers] = useState<Tier[]>(() => {
-		const storedTiers = localStorage.getItem("tiers");
+		const storedTiers = localStorage.getItem(tiersKey);
 
 		if (storedTiers) {
 			const parsedTiers: any[] = JSON.parse(storedTiers);
@@ -105,28 +124,94 @@ const App = () => {
 	});
 
 	useEffect(() => {
-		localStorage.setItem("tiers", JSON.stringify(tiers));
-	}, [tiers]);
+		localStorage.setItem(tiersKey, JSON.stringify(tiers));
+	}, [tiers, tiersKey]);
 
 	useEffect(() => {
-		localStorage.setItem("style", JSON.stringify(style));
-	}, [style]);
-
-	useEffect(() => {
-		// Also migrates image stores from localStorage to IndexedDB
-		migrateImageStoresFromLocalStorage();
-	}, []);
+		localStorage.setItem(styleKey, JSON.stringify(style));
+	}, [style, styleKey]);
 
 	return (
-		<div className="p-8 min-h-[100vh] bg-stone-800">
+		<ProjectContext.Provider value={{ projectId, namespace, switchProject }}>
 			<StylingContext.Provider value={{ style, setStyle }}>
 				<TierContext.Provider value={{ tiers, setTiers }}>
-					<TierList />
-					<AddTierButton />
-					<ImageHolder />
+					<div className="p-8 min-h-[100vh] bg-stone-800">
+						<ProjectSelector />
+						<TierList />
+						<AddTierButton />
+						<ImageHolder />
+					</div>
 				</TierContext.Provider>
 			</StylingContext.Provider>
-		</div>
+		</ProjectContext.Provider>
+	);
+};
+
+const App = () => {
+	const [appState, setAppState] = useState<{ projectId: string; namespace: string } | null>(null);
+
+	// Called from ProjectSelector via ProjectContext when user switches projects
+	const switchToProject = (newProjectId: string) => {
+		setCurrentProjectId(newProjectId);
+		setAppState({ projectId: newProjectId, namespace: `project_${newProjectId}` });
+	};
+
+	useEffect(() => {
+		const init = async () => {
+			const DEFAULT_PROJECT_ID = "default";
+			const DEFAULT_NAMESPACE = `project_${DEFAULT_PROJECT_ID}`;
+
+			// Check if project system already exists
+			const projectList = getProjectList();
+
+			if (projectList.length === 0) {
+				// --- First-time migration: move old data into default project ---
+
+				// Migrate localStorage keys
+				const oldTiers = localStorage.getItem("tiers");
+				const oldStyle = localStorage.getItem("style");
+
+				if (oldTiers) {
+					localStorage.setItem(`${DEFAULT_NAMESPACE}_tiers`, oldTiers);
+				}
+				if (oldStyle) {
+					localStorage.setItem(`${DEFAULT_NAMESPACE}_style`, oldStyle);
+				}
+
+				// Migrate IndexedDB images to namespaced keys
+				await migrateToProjectSystem(DEFAULT_NAMESPACE);
+
+				// Create default project
+				createProject("Default");
+				setCurrentProjectId(DEFAULT_PROJECT_ID);
+
+				// Clean up old un-namespaced localStorage keys
+				localStorage.removeItem("tiers");
+				localStorage.removeItem("style");
+			}
+
+			const currentId = getCurrentProjectId() || DEFAULT_PROJECT_ID;
+			setAppState({ projectId: currentId, namespace: `project_${currentId}` });
+		};
+
+		init();
+	}, []);
+
+	if (!appState) {
+		return (
+			<div className="p-8 min-h-[100vh] bg-stone-800 flex items-center justify-center">
+				<p className="text-gray-400 text-lg">Loading...</p>
+			</div>
+		);
+	}
+
+	return (
+		<AppInner
+			key={appState.projectId}
+			projectId={appState.projectId}
+			namespace={appState.namespace}
+			switchProject={switchToProject}
+		/>
 	);
 };
 

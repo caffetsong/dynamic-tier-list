@@ -2,6 +2,7 @@ const DB_NAME = "dynamic-tier-list";
 const DB_VERSION = 1;
 const IMAGE_STORE = "images";
 const MIGRATION_FLAG = "imageStoreMigratedV1";
+const V2_MIGRATION_FLAG = "projectMigrationV2";
 
 const IMAGE_HOLDER_KEY = "imageHolder";
 const TIER_IMAGE_KEY_PREFIX = "tierImages_";
@@ -26,6 +27,10 @@ export interface ImageResizeOptions {
 	quality: number;
 	pasteScaleMode: "fixed" | "preserve";
 }
+
+const nsKey = (namespace: string, key: string): string => {
+	return `${namespace}_${key}`;
+};
 
 const openDatabase = (): Promise<IDBDatabase> => {
 	if (dbPromise) {
@@ -65,35 +70,60 @@ const withStore = async <T>(
 	});
 };
 
-export const getImageStore = async (key: string): Promise<ImageItem[]> => {
-	const value = await withStore("readonly", (store) => store.get(key));
+export const getAllStoreKeys = async (): Promise<string[]> => {
+	const db = await openDatabase();
+	return new Promise((resolve, reject) => {
+		const transaction = db.transaction(IMAGE_STORE, "readonly");
+		const store = transaction.objectStore(IMAGE_STORE);
+		const request = store.getAllKeys();
+		request.onsuccess = () => resolve(request.result as string[]);
+		request.onerror = () => reject(request.error);
+	});
+};
+
+export const getImageStore = async (namespace: string, key: string): Promise<ImageItem[]> => {
+	const value = await withStore("readonly", (store) => store.get(nsKey(namespace, key)));
 	return Array.isArray(value) ? (value as ImageItem[]) : [];
 };
 
 export const setImageStore = async (
+	namespace: string,
 	key: string,
 	images: ImageItem[],
 ): Promise<void> => {
-	await withStore("readwrite", (store) => store.put(images, key));
+	await withStore("readwrite", (store) => store.put(images, nsKey(namespace, key)));
 };
 
 export const setOriginalImageData = async (
+	namespace: string,
 	image: OriginalImageItem,
 ): Promise<void> => {
-	await withStore("readwrite", (store) => store.put(image.url, `${ORIGINAL_IMAGE_KEY_PREFIX}${image.id}`));
+	await withStore("readwrite", (store) =>
+		store.put(image.url, nsKey(namespace, `${ORIGINAL_IMAGE_KEY_PREFIX}${image.id}`))
+	);
 };
 
-export const getOriginalImageData = async (imageId: number): Promise<string | null> => {
-	const value = await withStore("readonly", (store) => store.get(`${ORIGINAL_IMAGE_KEY_PREFIX}${imageId}`));
+export const getOriginalImageData = async (
+	namespace: string,
+	imageId: number,
+): Promise<string | null> => {
+	const value = await withStore("readonly", (store) =>
+		store.get(nsKey(namespace, `${ORIGINAL_IMAGE_KEY_PREFIX}${imageId}`))
+	);
 	return typeof value === "string" ? value : null;
 };
 
-export const deleteOriginalImageData = async (imageId: number): Promise<void> => {
-	await withStore("readwrite", (store) => store.delete(`${ORIGINAL_IMAGE_KEY_PREFIX}${imageId}`));
+export const deleteOriginalImageData = async (
+	namespace: string,
+	imageId: number,
+): Promise<void> => {
+	await withStore("readwrite", (store) =>
+		store.delete(nsKey(namespace, `${ORIGINAL_IMAGE_KEY_PREFIX}${imageId}`))
+	);
 };
 
-export const deleteImageStore = async (key: string): Promise<void> => {
-	await withStore("readwrite", (store) => store.delete(key));
+export const deleteImageStore = async (namespace: string, key: string): Promise<void> => {
+	await withStore("readwrite", (store) => store.delete(nsKey(namespace, key)));
 };
 
 const compressAndDownscaleImage = (
@@ -139,12 +169,13 @@ export const resizeImageDataUrl = async (
 };
 
 export const resizeStoredImages = async (
+	namespace: string,
 	images: ImageItem[],
 	options: ImageResizeOptions,
 ): Promise<ImageItem[]> => {
 	return Promise.all(
 		images.map(async (image) => {
-			const originalImage = await getOriginalImageData(image.id);
+			const originalImage = await getOriginalImageData(namespace, image.id);
 			const source = originalImage ?? image.url;
 			const resizedUrl = await resizeImageDataUrl(source, options);
 
@@ -156,10 +187,13 @@ export const resizeStoredImages = async (
 	);
 };
 
-export const getFullResolutionImages = async (images: ImageItem[]): Promise<ImageItem[]> => {
+export const getFullResolutionImages = async (
+	namespace: string,
+	images: ImageItem[],
+): Promise<ImageItem[]> => {
 	return Promise.all(
 		images.map(async (image) => {
-			const originalImage = await getOriginalImageData(image.id);
+			const originalImage = await getOriginalImageData(namespace, image.id);
 
 			return {
 				...image,
@@ -169,8 +203,20 @@ export const getFullResolutionImages = async (images: ImageItem[]): Promise<Imag
 	);
 };
 
-export const clearAllImageStores = async (): Promise<void> => {
-	await withStore("readwrite", (store) => store.clear());
+export const clearAllImageStores = async (namespace?: string): Promise<void> => {
+	if (!namespace) {
+		await withStore("readwrite", (store) => store.clear());
+		return;
+	}
+
+	// Clear only keys matching the namespace prefix
+	const allKeys = await getAllStoreKeys();
+	const prefix = `${namespace}_`;
+	const keysToDelete = allKeys.filter((key) => key.startsWith(prefix));
+
+	for (const key of keysToDelete) {
+		await withStore("readwrite", (store) => store.delete(key));
+	}
 };
 
 const getTierImageKeysFromLocalStorage = (): string[] => {
@@ -199,7 +245,7 @@ const parseStoredImages = (value: string | null): ImageItem[] => {
 	}
 };
 
-export const migrateImageStoresFromLocalStorage = async (): Promise<void> => {
+export const migrateImageStoresFromLocalStorage = async (namespace: string): Promise<void> => {
 	if (migrationPromise) {
 		return migrationPromise;
 	}
@@ -217,10 +263,10 @@ export const migrateImageStoresFromLocalStorage = async (): Promise<void> => {
 		for (const key of keysToMigrate) {
 			const parsedImages = parseStoredImages(localStorage.getItem(key));
 			if (parsedImages.length > 0) {
-				await setImageStore(key, parsedImages);
+				await setImageStore(namespace, key, parsedImages);
 				await Promise.all(
 					parsedImages.map((image) =>
-						setOriginalImageData({
+						setOriginalImageData(namespace, {
 							id: image.id,
 							url: image.url,
 						})
@@ -237,4 +283,70 @@ export const migrateImageStoresFromLocalStorage = async (): Promise<void> => {
 	})();
 
 	return migrationPromise;
+};
+
+/**
+ * One-time migration from un-namespaced IndexedDB keys to project-namespaced keys.
+ * This copies all existing keys without "project_" prefix into the given namespace.
+ */
+const migrateIndexedDBToNamespace = async (namespace: string): Promise<void> => {
+	const allKeys = await getAllStoreKeys();
+
+	for (const key of allKeys) {
+		// Skip keys that are already namespaced
+		if (key.startsWith("project_")) continue;
+
+		const value = await withStore("readonly", (store) => store.get(key));
+		if (value !== undefined) {
+			await withStore("readwrite", (store) => store.put(value, nsKey(namespace, key)));
+		}
+	}
+};
+
+/**
+ * Full migration to the v2 project system.
+ * - Migrates localStorage images to namespaced IndexedDB (if v1 not done)
+ * - Copies existing un-namespaced IndexedDB keys to the default namespace
+ * Returns the default namespace string.
+ */
+export const migrateToProjectSystem = async (namespace: string): Promise<void> => {
+	if (localStorage.getItem(V2_MIGRATION_FLAG) === "true") {
+		return;
+	}
+
+	// Step 1: Ensure v1 migration is done (localStorage images → IndexedDB)
+	const v1Done = localStorage.getItem(MIGRATION_FLAG) === "true";
+
+	if (!v1Done) {
+		const keysToMigrate = [
+			IMAGE_HOLDER_KEY,
+			...getTierImageKeysFromLocalStorage(),
+		];
+
+		for (const key of keysToMigrate) {
+			const parsedImages = parseStoredImages(localStorage.getItem(key));
+			if (parsedImages.length > 0) {
+				await setImageStore(namespace, key, parsedImages);
+				await Promise.all(
+					parsedImages.map((image) =>
+						setOriginalImageData(namespace, {
+							id: image.id,
+							url: image.url,
+						})
+					)
+				);
+			}
+
+			if (localStorage.getItem(key) !== null) {
+				localStorage.removeItem(key);
+			}
+		}
+
+		localStorage.setItem(MIGRATION_FLAG, "true");
+	}
+
+	// Step 2: Copy un-namespaced IndexedDB keys to namespaced versions
+	await migrateIndexedDBToNamespace(namespace);
+
+	localStorage.setItem(V2_MIGRATION_FLAG, "true");
 };
