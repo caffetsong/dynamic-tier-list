@@ -1,5 +1,5 @@
 # Dynamic Tier List
-
+添加分页功能
 ## Example
 ![POWCowXiMR](https://github.com/Cryptizism/dynamic-tier-list/assets/60571306/529dc106-42d5-4a6e-8a65-74cc63cf63e8)
 
